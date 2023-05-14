@@ -1,0 +1,7 @@
+[workspace]
+
+members = [
+  "mts-parser",
+  "h264-parser",
+  "printer",
+]
