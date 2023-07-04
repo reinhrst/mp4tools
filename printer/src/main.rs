@@ -1,5 +1,5 @@
 use clap::Parser;
-use h264_parser::{FileIterator, NALUnit, NALUnitIterator};
+use h264_parser::{NALUnit, NALUnitIterator};
 use std::error::Error;
 use std::fs::File;
 use std::path::PathBuf;
@@ -16,12 +16,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     println!("Hello {}!", args.input.to_str().expect("Not unicode path"));
     let file = File::open(args.input)?;
-    let file_iterator = FileIterator::new(file);
-    let nal_unit_iterator = NALUnitIterator::new(Box::new(file_iterator));
+    let nal_unit_iterator = NALUnitIterator::new(Box::new(file));
     let mut framecnt = 0;
     for nal_unit in nal_unit_iterator {
         match nal_unit {
-            NALUnit::IDR(_) | NALUnit::NonIDR(_) => {
+            NALUnit::IDRPicture(_) | NALUnit::NonIDRPicture(_) => {
                 framecnt += 1;
                 if framecnt % 24 == 0 {
                     println!("")
@@ -33,10 +32,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             _ => ()
         }
         match nal_unit {
-            NALUnit::IDR(_) => {
+            NALUnit::Unknown(nu) => {
+                // println!("{:?}", nu);
+            }
+            NALUnit::IDRPicture(_) => {
                 print!("R")
             }
-            NALUnit::NonIDR(ref non_idr) => match non_idr.ref_idc {
+            NALUnit::NonIDRPicture(ref non_idr) => match non_idr.ref_idc {
                 3 => print!("I"),
                 2 => print!("P"),
                 0 => print!("B"),
