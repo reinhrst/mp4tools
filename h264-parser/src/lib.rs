@@ -5,7 +5,6 @@ use std::io::Read;
 use circular::Buffer;
 
 use winnow::{
-    stream::StreamIsPartial,
     error,
     stream::Offset,
 };
@@ -41,10 +40,7 @@ impl Iterator for NALUnitIterator {
         }
         loop {
             //println!("{}, {}", self.has_reached_eof , self.buffer.available_data());
-            let mut input = stream::stream(self.buffer.data());
-            if self.has_reached_eof {
-                let _ = input.complete();
-            }
+            let mut input = stream::partialstream(self.buffer.data(), self.has_reached_eof);
             match nalunits::parse_nal_unit(input) {
                 Ok((remainer, return_value)) => {
                     let consumed = input.offset_to(&remainer);

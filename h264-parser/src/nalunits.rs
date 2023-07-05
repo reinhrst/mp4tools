@@ -1,16 +1,11 @@
-use super::stream::{Stream,stream};
+use super::stream::{stream, Stream, PartialStream};
 use std::fmt;
 
 const SHORT_NAL_BOUNDARY: &[u8] = b"\x00\x00\x01";
 const LONG_NAL_BOUNDARY: &[u8] = b"\x00\x00\x00\x01";
+const EMULATION_PREVENTION_BYTES: &[u8] = b"\x00\x00\x03"; 
 
-use winnow::{
-    binary::bits,
-    combinator::{alt, peek},
-    stream::StreamIsPartial,
-    error,
-    token, IResult, Parser,
-};
+use winnow::{binary::{bits,self}, combinator, error, token, IResult, Parser };
 
 //
 // enum NALUnitType {
@@ -33,15 +28,20 @@ use winnow::{
 //     // CodedSliceExtension = 20,
 // }
 
-fn parse_till_nal_unit_end(input: Stream) -> IResult<Stream, Stream> {
-    let (input, data) = alt((
-            Parser::complete_err(token::take_until0(LONG_NAL_BOUNDARY)),
-            token::take_until0(SHORT_NAL_BOUNDARY),
-            token::take_till0(|_| false),
-        )).parse_next(input)?;
-    let mut datastream = stream(data);
-    let _ = datastream.complete();
-    Ok((input, datastream))
+fn parse_till_nal_unit_end(input: PartialStream) -> IResult<PartialStream, Vec<u8>> {
+    let (input, data) = combinator::alt((
+        Parser::complete_err(token::take_until0(LONG_NAL_BOUNDARY)),
+        token::take_until0(SHORT_NAL_BOUNDARY),
+        combinator::rest,
+    ))
+    .parse_next(input)?;
+    let (suffix, mut parts): (Stream, Vec<&[u8]>) = combinator::repeat(
+        0.., (
+            token::take_until0::<_, _, ()>(EMULATION_PREVENTION_BYTES),
+            EMULATION_PREVENTION_BYTES,
+            ).map(|x| x.0)).parse_next(data).unwrap();
+    parts.push(suffix);
+    Ok((input, parts.join(&[0_u8; 2][..])))
 }
 
 pub trait NALUnitBase {
@@ -53,9 +53,11 @@ pub trait KnownNALUnit {
 
     fn parse_idc_ref_and_check_nutype(input: Stream) -> IResult<Stream, u8> {
         let nutype_parser = bits::tag(Self::NU_TYPE, 5_usize);
-        let (input, (ref_idc, _nutype)) = bits::bits::<_, _, error::Error<(_, usize)>, _, _>(
-            (bits::take(3_usize), nutype_parser),
-        )
+        let (input, (_, ref_idc, _nutype)) = bits::bits::<_, _, error::Error<(_, usize)>, _, _>((
+            bits::tag(0_u8, 1_usize),
+            bits::take(2_usize),
+            nutype_parser,
+        ))
         .parse_next(input)?;
         Ok((input, ref_idc))
     }
@@ -70,9 +72,15 @@ pub struct NonIDRPictureNU {
 impl KnownNALUnit for NonIDRPictureNU {
     const NU_TYPE: u8 = 1;
     fn parse(input: Stream) -> IResult<Stream, NALUnit> {
-        let (input, nudata) = parse_till_nal_unit_end(input)?;
-        let (nudata, ref_idc) = Self::parse_idc_ref_and_check_nutype(nudata)?;
-        Ok((input, NALUnit::NonIDRPicture(Self { ref_idc, rest: nudata.into_inner().to_vec() })))
+        let (input, ref_idc) = Self::parse_idc_ref_and_check_nutype(input)?;
+        let (input, rest) = combinator::rest.parse_next(input)?;
+        Ok((
+            input,
+            NALUnit::NonIDRPicture(Self {
+                ref_idc,
+                rest: rest.to_vec(),
+            }),
+        ))
     }
 }
 
@@ -96,9 +104,15 @@ impl KnownNALUnit for IDRPictureNU {
     const NU_TYPE: u8 = 5;
 
     fn parse(input: Stream) -> IResult<Stream, NALUnit> {
-        let (input, nudata) = parse_till_nal_unit_end(input)?;
-        let (nudata, ref_idc) = Self::parse_idc_ref_and_check_nutype(nudata)?;
-        Ok((input, NALUnit::IDRPicture(Self { ref_idc, rest: nudata.into_inner().to_vec() })))
+        let (input, ref_idc) = Self::parse_idc_ref_and_check_nutype(input)?;
+        let (input, rest) = combinator::rest.parse_next(input)?;
+        Ok((
+            input,
+            NALUnit::IDRPicture(Self {
+                ref_idc,
+                rest: rest.to_vec(),
+            }),
+        ))
     }
 }
 
@@ -121,16 +135,22 @@ pub struct UnknownNU {
 
 impl NALUnitBase for UnknownNU {
     fn parse(input: Stream) -> IResult<Stream, NALUnit> {
-        let (input, nudata) = parse_till_nal_unit_end(input)?;
-
-        let nutype_parser = bits::take(5_usize);
-        let (nudata, (ref_idc, nal_unit_type)) = bits::bits::<_, _, error::Error<(_, usize)>, _, _>(
-            (bits::take(3_usize), nutype_parser),
-        )
-        .parse_next(nudata)?;
-        Ok((input, NALUnit::Unknown(Self { nal_unit_type, ref_idc, rest: nudata.into_inner().to_vec() })))
+        let (input, (ref_idc, nal_unit_type)) =
+            bits::bits::<_, _, error::Error<(_, usize)>, _, _>((
+                bits::take(3_usize),
+                bits::take(5_usize),
+            ))
+            .parse_next(input)?;
+        let (input, rest) = combinator::rest.parse_next(input)?;
+        Ok((
+            input,
+            NALUnit::Unknown(Self {
+                nal_unit_type,
+                ref_idc,
+                rest: rest.to_vec(),
+            }),
+        ))
     }
-
 }
 
 impl fmt::Debug for UnknownNU {
@@ -238,13 +258,15 @@ pub enum NALUnit {
 // }
 //
 
-pub fn parse_nal_unit(input: Stream) -> IResult<Stream, NALUnit> {
-    let (input, _) = alt((LONG_NAL_BOUNDARY, SHORT_NAL_BOUNDARY)).parse_next(input)?;
-    let (input, (_idc_ref, nu_type)) = peek(bits::bits::<_, (u8, u8), error::Error<(_, usize)>, _, _>(
-            (bits::take(3_usize),  bits::take(5_usize)))).parse_next(input)?;
-    match nu_type {
-        IDRPictureNU::NU_TYPE => IDRPictureNU::parse(input),
-        NonIDRPictureNU::NU_TYPE => NonIDRPictureNU::parse(input),
-        _ => UnknownNU::parse(input),
-    }
+pub fn parse_nal_unit(input: PartialStream) -> IResult<PartialStream, NALUnit> {
+    let (input, _) = combinator::alt((LONG_NAL_BOUNDARY, SHORT_NAL_BOUNDARY)).parse_next(input)?;
+    let (input, nudata) = parse_till_nal_unit_end(input)?;
+    let nudata = stream(&nudata[..]);
+    let (nudata, firstbyte) = combinator::peek(binary::u8::<_, ()>).parse_next(nudata).unwrap();
+    let nal_unit = match firstbyte & 0b0001_1111_u8 {
+        IDRPictureNU::NU_TYPE => IDRPictureNU::parse.parse(nudata),
+        NonIDRPictureNU::NU_TYPE => NonIDRPictureNU::parse.parse(nudata),
+        _ => UnknownNU::parse.parse(nudata),
+    }.unwrap();
+    Ok((input, nal_unit))
 }

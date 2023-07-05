@@ -1,7 +1,17 @@
-use winnow::{Bytes, stream::Partial};
+use winnow::{Bytes, stream::{Partial, StreamIsPartial}};
 
-pub type Stream<'i> = Partial<&'i Bytes>;
+pub type PartialStream<'i> = Partial<&'i Bytes>;
 
-pub fn stream(b: &[u8]) -> Stream<'_> {
-    Stream::new(Bytes::new(b))
+pub fn partialstream(b: &[u8], complete: bool) -> PartialStream<'_> {
+    let mut mystream = PartialStream::new(Bytes::new(b));
+    if complete {
+        let _ = mystream.complete();
+    };
+    mystream
+}
+
+pub type Stream<'i> = &'i [u8];
+
+pub fn stream(b: &[u8]) -> Stream {
+    b
 }
