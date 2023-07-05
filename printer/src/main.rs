@@ -1,5 +1,5 @@
 use clap::Parser;
-use h264_parser::{NALUnit, NALUnitIterator};
+use h264_parser::{nalunits::NALUnit, NALUnitIterator};
 use std::error::Error;
 use std::fs::File;
 use std::path::PathBuf;
@@ -32,8 +32,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             _ => ()
         }
         match nal_unit {
-            NALUnit::Unknown(nu) => {
-                // println!("{:?}", nu);
+            NALUnit::Unknown(_nu) => {
+                // println!("{:?}", _nu);
             }
             NALUnit::IDRPicture(_) => {
                 print!("R")
