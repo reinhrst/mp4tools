@@ -35,11 +35,12 @@ fn parse_till_nal_unit_end(input: PartialStream) -> IResult<PartialStream, Vec<u
         combinator::rest,
     ))
     .parse_next(input)?;
+    let datastream = stream(data);
     let (suffix, mut parts): (Stream, Vec<&[u8]>) = combinator::repeat(
         0.., (
             token::take_until0::<_, _, ()>(EMULATION_PREVENTION_BYTES),
             EMULATION_PREVENTION_BYTES,
-            ).map(|x| x.0)).parse_next(data).unwrap();
+            ).map(|x| x.0)).parse_next(datastream).unwrap();
     parts.push(suffix);
     Ok((input, parts.join(&[0_u8; 2][..])))
 }

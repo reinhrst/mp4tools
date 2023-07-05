@@ -10,8 +10,8 @@ pub fn partialstream(b: &[u8], complete: bool) -> PartialStream<'_> {
     mystream
 }
 
-pub type Stream<'i> = &'i [u8];
+pub type Stream<'i> = &'i Bytes;
 
 pub fn stream(b: &[u8]) -> Stream {
-    b
+    Bytes::new(b)
 }
