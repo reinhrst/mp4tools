@@ -1,12 +1,12 @@
 use std::fmt;
 use std::fs::File;
-use std::io::{Read, };
+use std::io::Read;
 use circular::Buffer;
 
 use winnow::{
-    binary::{bits},
+    binary::bits,
     stream::{Partial, StreamIsPartial},
-    combinator::{dispatch, eof, alt},
+    combinator::{dispatch, alt},
     token,
     IResult,
     Parser,
