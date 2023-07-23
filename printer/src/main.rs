@@ -1,5 +1,6 @@
 use clap::Parser;
 use h264_parser::{nalunits::NALUnit, NALUnitIterator};
+use mts_parser::{packets::Packet, MTSPacketIterator};
 use std::error::Error;
 use std::fs::File;
 use std::path::PathBuf;
@@ -16,6 +17,18 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     println!("Hello {}!", args.input.to_str().expect("Not unicode path"));
     let file = File::open(args.input)?;
+    parse_mts(file)
+}
+
+fn parse_mts(file: File) -> Result<(), Box<dyn Error>> {
+    let packet_iterator = MTSPacketIterator::new(Box::new(file));
+    for packet in packet_iterator {
+        print!("{:?}", packet);
+    }
+    Ok(())
+}
+
+fn parse_h264(file: File) -> Result<(), Box<dyn Error>> {
     let nal_unit_iterator = NALUnitIterator::new(Box::new(file));
     let mut framecnt = 0;
     for nal_unit in nal_unit_iterator {

@@ -189,6 +189,10 @@ checksum = "2dffe52ecf27772e601905b7522cb4ef790d2cc203488bbd0e2fe85fcb74566d"
 [[package]]
 name = "mts-parser"
 version = "0.1.0"
+dependencies = [
+ "circular",
+ "winnow",
+]
 
 [[package]]
 name = "once_cell"
@@ -202,6 +206,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "h264-parser",
+ "mts-parser",
 ]
 
 [[package]]

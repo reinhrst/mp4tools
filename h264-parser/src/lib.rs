@@ -35,12 +35,11 @@ impl Iterator for NALUnitIterator {
     type Item = nalunits::NALUnit;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.has_reached_eof && self.buffer.available_data() == 0 {
-            return None;
-        }
         loop {
-            //println!("{}, {}", self.has_reached_eof , self.buffer.available_data());
-            let mut input = stream::partialstream(self.buffer.data(), self.has_reached_eof);
+            if self.has_reached_eof && self.buffer.available_data() == 0 {
+                return None;
+            }
+            let input = stream::partialstream(self.buffer.data(), self.has_reached_eof);
             match nalunits::parse_nal_unit(input) {
                 Ok((remainer, return_value)) => {
                     let consumed = input.offset_to(&remainer);
@@ -48,7 +47,6 @@ impl Iterator for NALUnitIterator {
                     return Some(return_value);
                 }
                 Err(error::ErrMode::Incomplete(_)) => {
-                    // println!("More data needed (now {} bytes availble)", self.buffer.available_data());
                     if self.buffer.position() + self.buffer.available_space() >= CHUNK_SIZE {
                         self.buffer.shift();
                     } else {
