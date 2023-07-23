@@ -1,6 +1,6 @@
 use clap::Parser;
 use h264_parser::{nalunits::NALUnit, NALUnitIterator};
-use mts_parser::{packets::Packet, MTSPacketIterator};
+use mts_parser::{packets::Packet, MTSPacketIterator, ElementIterator};
 use std::error::Error;
 use std::fs::File;
 use std::path::PathBuf;
@@ -22,8 +22,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn parse_mts(file: File) -> Result<(), Box<dyn Error>> {
     let packet_iterator = MTSPacketIterator::new(Box::new(file));
-    for packet in packet_iterator {
-        print!("{:?}", packet);
+    let element_iterator = ElementIterator::new(packet_iterator);
+    for element in element_iterator {
+        println!("{:?}", element);
     }
     Ok(())
 }
