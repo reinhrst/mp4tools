@@ -3,7 +3,8 @@ pub mod crc;
 pub mod psi_packet;
 pub mod stream;
 use circular::Buffer;
-use std::{collections, io::Read};
+use std::{collections::{HashMap, HashSet}, io::Read};
+use psi_packet::{Parsable, StreamPacket, PATTable, PMTTable, PESPacket};
 
 use winnow::{error, stream::Offset};
 
@@ -63,11 +64,6 @@ impl Iterator for MTSPacketIterator {
     }
 }
 
-#[derive(Debug)]
-pub enum Element {
-    PATTable(psi_packet::PATTable),
-}
-
 struct MapEntry {
     buffer: Buffer,
     complete_element_cutoff: Option<usize>,
@@ -83,9 +79,11 @@ impl MapEntry {
 }
 
 pub struct ElementIterator {
-    packet_stream_map: collections::HashMap<u16, MapEntry>,
+    packet_stream_map: HashMap<u16, MapEntry>,
     packet_iterator: MTSPacketIterator,
     last_pid: Option<u16>,
+    pmt_table_pids: HashSet<u16>,
+    pes_stream_pids: HashSet<u16>,
 }
 
 impl ElementIterator {
@@ -93,20 +91,22 @@ impl ElementIterator {
     const PADDING_PID: u16 = 0x1fff;
     pub fn new(packet_iterator: MTSPacketIterator) -> Self {
         Self {
-            packet_stream_map: collections::HashMap::new(),
+            packet_stream_map: HashMap::new(),
             packet_iterator,
             last_pid: None,
+            pmt_table_pids: HashSet::new(),
+            pes_stream_pids: HashSet::new(),
         }
     }
 }
 
 impl Iterator for ElementIterator {
-    type Item = Element;
+    type Item = (u16, StreamPacket);
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(last_pid) = self.last_pid {
             if let Some(element) = self.parse_pid_data_for_pid(&last_pid) {
-                return Some(element);
+                return Some((last_pid, element));
             } else {
                 self.last_pid = None;
             }
@@ -115,12 +115,15 @@ impl Iterator for ElementIterator {
             match self.packet_iterator.next() {
                 None => {
                     // no more data; parse the data items still waiting
-                    let Some(pid) = self.packet_stream_map.keys().next() else {
+                    let Some((pid, entry)) = self.packet_stream_map.iter_mut().next() else {
                         return None;
                     };
                     let pid = &pid.clone();
-                    // TODO: entry.complete_element_cutoff = Some(entry.buffer.available_data());
-                    return self.parse_pid_data_for_pid(pid);
+                    entry.complete_element_cutoff = Some(entry.buffer.available_data());
+                    return match self.parse_pid_data_for_pid(pid) {
+                        Some(stream_packet) => Some((*pid, stream_packet)),
+                        None => None,
+                    };
                 }
                 Some(packet) => {
                     if packet.pid == Self::PADDING_PID {
@@ -157,14 +160,15 @@ impl Iterator for ElementIterator {
                             entry.buffer.available_data() - data.data.len() + data.cutoff as usize;
 
                         if was_empty {
-                            // everything before the buffer is from previous item, skip
+                            // everything before the buffer is from previous item, but we don't
+                            // have the start to this element, so skip.
                             entry.buffer.consume(complete_element_cutoff);
                         } else {
                             entry.complete_element_cutoff = Some(complete_element_cutoff);
                         }
                     }
                     if let Some(element) = self.parse_pid_data_for_pid(&packet.pid) {
-                        return Some(element);
+                        return Some((packet.pid, element));
                     }
                 }
             }
@@ -173,7 +177,7 @@ impl Iterator for ElementIterator {
 }
 
 impl ElementIterator {
-    fn parse_pid_data_for_pid(&mut self, pid: &u16) -> Option<Element> {
+    fn parse_pid_data_for_pid(&mut self, pid: &u16) -> Option<StreamPacket> {
         let Some(entry) = self.packet_stream_map.get_mut(pid) else {
             return None;
         };
@@ -181,23 +185,40 @@ impl ElementIterator {
             Some(cutoff) => stream::partialstream(&entry.buffer.data()[..cutoff], true),
             None => stream::partialstream(entry.buffer.data(), false),
         };
+        let parser = 
         if *pid == Self::PAT_PID {
-            return match psi_packet::PATTable::parse(input) {
-                Ok((remainder, pat_table)) => {
-                    let consumed = input.offset_to(&remainder);
-                    entry.buffer.consume(consumed);
-                    if entry.buffer.empty() {
-                        self.packet_stream_map.remove(&pid);
-                    } else {
-                        entry.complete_element_cutoff = None;
-                    }
-                    Some(Element::PATTable(pat_table))
-                }
-                Err(error::ErrMode::Incomplete(_)) => None,
-                Err(e) => panic!("Parse error: {}", e),
-            };
+            PATTable::parse
+        } else if self.pmt_table_pids.contains(pid) {
+            PMTTable::parse
+        } else if self.pes_stream_pids.contains(pid) {
+            PESPacket::parse
         } else {
-            None
+            return None;
+        };
+        let result = match parser(input) {
+            Ok((remainder, stream_packet)) => {
+                let consumed = input.offset_to(&remainder);
+                entry.buffer.consume(consumed);
+                if entry.buffer.empty() {
+                    self.packet_stream_map.remove(&pid);
+                } else {
+                    entry.complete_element_cutoff = None;
+                }
+                Some(stream_packet)
+            }
+            Err(error::ErrMode::Incomplete(_)) => None,
+            Err(e) => panic!("Parse error: {}", e),
+        };
+        if let Some(StreamPacket::PAT(ref pat_table)) = result {
+            for entry in pat_table.entries.iter() {
+                self.pmt_table_pids.insert(entry.program_map_pid);
+            }
         }
+        if let Some(StreamPacket::PMT(ref pmt_table)) = result {
+            for esi in pmt_table.elementary_stream_info_data.iter() {
+                self.pes_stream_pids.insert(esi.pid);
+            }
+        }
+        result
     }
 }
