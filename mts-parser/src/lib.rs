@@ -1,5 +1,6 @@
 pub mod packets;
-pub mod pat_packet;
+pub mod crc;
+pub mod psi_packet;
 pub mod stream;
 use circular::Buffer;
 use std::{collections, io::Read};
@@ -64,7 +65,7 @@ impl Iterator for MTSPacketIterator {
 
 #[derive(Debug)]
 pub enum Element {
-    PATTableEntry(pat_packet::PATTable),
+    PATTable(psi_packet::PATTable),
 }
 
 struct MapEntry {
@@ -181,7 +182,7 @@ impl ElementIterator {
             None => stream::partialstream(entry.buffer.data(), false),
         };
         if *pid == Self::PAT_PID {
-            return match pat_packet::PATTable::parse(input) {
+            return match psi_packet::PATTable::parse(input) {
                 Ok((remainder, pat_table)) => {
                     let consumed = input.offset_to(&remainder);
                     entry.buffer.consume(consumed);
@@ -190,7 +191,7 @@ impl ElementIterator {
                     } else {
                         entry.complete_element_cutoff = None;
                     }
-                    Some(Element::PATTableEntry(pat_table))
+                    Some(Element::PATTable(pat_table))
                 }
                 Err(error::ErrMode::Incomplete(_)) => None,
                 Err(e) => panic!("Parse error: {}", e),
