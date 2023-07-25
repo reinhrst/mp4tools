@@ -1,10 +1,10 @@
 pub mod packets;
 pub mod crc;
-pub mod psi_packet;
+pub mod stream_packet;
 pub mod stream;
 use circular::Buffer;
 use std::{collections::{HashMap, HashSet}, io::Read};
-use psi_packet::{Parsable, StreamPacket, PATTable, PMTTable, PESPacket};
+use stream_packet::{Parsable, StreamPacket, PATTable, PMTTable, PESPacket};
 
 use winnow::{error, stream::Offset};
 
