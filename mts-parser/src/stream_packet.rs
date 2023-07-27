@@ -45,7 +45,7 @@ pub enum StreamPacket {
     PAT(PATTable),
     PMT(PMTTable),
     PES(PESPacket),
-    Unknown(PSISharedTableInfo, Vec<u8>),
+    UnsupportedPSITable(PSISharedTableInfo, Vec<u8>),
 }
 
 #[derive(Debug)]
@@ -135,7 +135,7 @@ pub trait Parsable {
     fn parse(input: PartialStream) -> IResult<PartialStream, StreamPacket> {
         let (input, (psi_data, body)) = PSISharedTableInfo::parse(input)?;
         if psi_data.table_id != Self::TABLE_ID {
-            return Ok((input, StreamPacket::Unknown(psi_data, body.to_vec())));
+            return Ok((input, StreamPacket::UnsupportedPSITable(psi_data, body.to_vec())));
         }
         let bodyinput = partialstream(body, true);
         let (bodyinput, result) = Self::parse_body(bodyinput, psi_data)?;
